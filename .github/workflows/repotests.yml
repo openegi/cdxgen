@@ -646,13 +646,12 @@ jobs:
           CDXGEN_DEBUG_MODE: debug
 
   cli-tests:
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: true
       matrix:
-        # Keep the exhaustive matrix off the PR path while preserving the self-hosted Ubuntu lane.
+        # Run a single representative lane on PRs while keeping the full matrix elsewhere.
         java-version: ['24']
-        os: ['self-hosted-ubuntu', 'ubuntu-24.04-arm', 'windows-latest', 'macos-15']
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted-ubuntu"]') || fromJSON('["self-hosted-ubuntu", "ubuntu-24.04-arm", "windows-latest", "macos-15"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1490,12 +1489,12 @@ jobs:
           path: bomresults
 
   secure-mode-tests:
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: true
       matrix:
         java-version: ['24']
-        os: ['ubuntu-24.04', 'ubuntu-24.04-arm', 'macos-15']
+        # Run a single representative lane on PRs while keeping the full matrix elsewhere.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-24.04"]') || fromJSON('["ubuntu-24.04", "ubuntu-24.04-arm", "macos-15"]') }}
     runs-on: ${{ matrix.os }}
     env:
       CDXGEN_DEBUG_MODE: verbose
