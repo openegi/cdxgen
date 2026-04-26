@@ -650,9 +650,9 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        # Keep the exhaustive matrix hosted-only so PRs do not queue additional self-hosted work.
+        # Keep the exhaustive matrix off the PR path while preserving the self-hosted Ubuntu lane.
         java-version: ['24']
-        os: ['ubuntu-24.04', 'ubuntu-24.04-arm', 'windows-latest', 'macos-15']
+        os: ['self-hosted-ubuntu', 'ubuntu-24.04-arm', 'windows-latest', 'macos-15']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -680,13 +680,13 @@ jobs:
         with:
           bun-version: 1.3.11
       - name: Trim CI agent
-        if: matrix.os == 'ubuntu-24.04' || matrix.os == 'ubuntu-24.04-arm'
+        if: matrix.os == 'self-hosted-ubuntu' || matrix.os == 'ubuntu-24.04-arm'
         run: |
           chmod +x contrib/free_disk_space.sh
           ./contrib/free_disk_space.sh
       - uses: sbt/setup-sbt@508b753e53cb6095967669e0911487d2b9bc9f41 # v1.1.22
       - name: Install bazelisk - linux
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'self-hosted-ubuntu'
         run: |
           curl -LO "https://github.com/bazelbuild/bazelisk/releases/download/v1.20.0/bazelisk-linux-amd64"
           sudo mv bazelisk-linux-amd64 /usr/local/bin/bazel
@@ -722,7 +722,7 @@ jobs:
           packages: 'platform-tools'
       - run: sdkmanager --uninstall "build-tools;30.0.3"
       - name: Setup swift
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'self-hosted-ubuntu'
         run: |
           curl -O "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" && \
           tar zxf "swiftly-$(uname -m).tar.gz" && \
@@ -1220,7 +1220,7 @@ jobs:
           CDXGEN_DEBUG_MODE=verbose bin/cdxgen.js -r -t clojure repotests/ziggurat -o bomresults/bom-clj.json --fail-on-error
         shell: bash
       - name: repotests swift-markdown
-        if: matrix.os == 'ubuntu-24.04' || matrix.os == 'macos-15' || matrix.os == 'self-hosted-ubuntu'
+        if: matrix.os == 'self-hosted-ubuntu' || matrix.os == 'macos-15'
         run: |
           CDXGEN_DEBUG_MODE=verbose bin/cdxgen.js -r -t swift repotests/swift-markdown -o bomresults/bom-swift.json
           CDXGEN_DEBUG_MODE=verbose bin/cdxgen.js -r -t swift repotests/swift-markdown -o bomresults/bom-swift.json --profile research
