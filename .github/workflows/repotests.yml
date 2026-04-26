@@ -46,7 +46,7 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version-file: .nvmrc
-          package-manager-cache: false
+          package-manager-cache: true
       - name: Setup Nexus usage
         run: echo "registry=$NEXUS_URL" > .npmrc
       - name: pnpm install
@@ -128,7 +128,7 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version-file: .nvmrc
-          package-manager-cache: false
+          package-manager-cache: true
       - name: Setup Nexus usage
         run: echo "registry=$NEXUS_URL" > .npmrc
       - name: pnpm install
@@ -169,12 +169,483 @@ jobs:
         shell: bash
       - name: Cleanup
         run: rm -rf /tmp/docker-images-* /tmp/atom-*  /tmp/mvn-deps*
+
+  detect-hosted-suite-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run-all: ${{ steps.changes.outputs.run_all }}
+      run-linux-core: ${{ steps.changes.outputs.run_linux_core }}
+      run-macos-mobile: ${{ steps.changes.outputs.run_macos_mobile }}
+      run-windows-dotnet: ${{ steps.changes.outputs.run_windows_dotnet }}
+      run-arm-smoke: ${{ steps.changes.outputs.run_arm_smoke }}
+      run-secure-mode: ${{ steps.changes.outputs.run_secure_mode }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: changes
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            {
+              echo "run_all=true"
+              echo "run_linux_core=true"
+              echo "run_macos_mobile=true"
+              echo "run_windows_dotnet=true"
+              echo "run_arm_smoke=true"
+              echo "run_secure_mode=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}" > /tmp/repotest-changes.txt
+          python <<'INNERPY'
+          from pathlib import Path
+          import os
+
+          changed = [
+            line.strip().lower()
+            for line in Path('/tmp/repotest-changes.txt').read_text(encoding='utf-8').splitlines()
+            if line.strip()
+          ]
+
+          run_all_prefixes = (
+            '.github/workflows/repotests.yml',
+            '.nvmrc',
+            '.pnpmfile.cjs',
+            'bin/',
+            'data/',
+            'index.cjs',
+            'lib/cli/index.js',
+            'lib/helpers/utils.js',
+            'package.json',
+            'pnpm-lock.yaml',
+          )
+          run_all = any(path.startswith(run_all_prefixes) for path in changed)
+
+          def matches(*tokens):
+            return any(any(token in path for token in tokens) for path in changed)
+
+          outputs = {
+            'run_all': run_all,
+            'run_linux_core': True,
+            'run_macos_mobile': run_all or matches('swift', 'cocoa', 'gradle', 'android', 'expo'),
+            'run_windows_dotnet': run_all or matches('dotnet', 'csharp', 'tsproj', 'framework', 'windows'),
+            'run_arm_smoke': run_all or matches('go', 'golang', 'rust', 'cargo', 'dart', 'clojure'),
+            'run_secure_mode': True,
+          }
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output_file:
+            for key, value in outputs.items():
+              output_file.write(f"{key}={'true' if value else 'false'}\n")
+          INNERPY
+
+  hosted-linux-core-tests:
+    needs: detect-hosted-suite-changes
+    if: github.event_name == 'pull_request' && needs.detect-hosted-suite-changes.outputs.run-linux-core == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up JDK 24
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: '24'
+          cache: 'maven'
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26.1'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: true
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - name: Trim CI agent
+        run: |
+          chmod +x contrib/free_disk_space.sh
+          ./contrib/free_disk_space.sh
+      - name: pnpm install
+        run: |
+          pnpm install:frozen
+          mkdir -p repotests bomresults
+        env:
+          CI: true
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'kriasoft/react-app'
+          path: 'repotests/react-app'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'DIYgod/RSSHub'
+          path: 'repotests/RSSHub'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'hoolicorp/java-sec-code'
+          path: 'repotests/java-sec-code'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'quarkusio/quarkus-quickstarts'
+          path: 'repotests/quarkus-quickstarts'
+          ref: '3.17.3'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'ShiftLeftSecurity/shiftleft-java-example'
+          path: 'repotests/shiftleft-java-example'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'ShiftLeftSecurity/shiftleft-ts-example'
+          path: 'repotests/shiftleft-ts-example'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'DefectDojo/django-DefectDojo'
+          ref: '2.28.2'
+          path: 'repotests/django-DefectDojo'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'prabhu/railsgoat'
+          path: 'repotests/railsgoat'
+      - name: repotests linux core
+        shell: bash
+        run: |
+          FETCH_LICENSE=false bin/cdxgen.js -t nodejs8 repotests/react-app -o bomresults/react-app.json --fail-on-error
+          FETCH_LICENSE=false bin/cdxgen.js -t nodejs22 repotests/RSSHub -o bomresults/RSSHub.json --fail-on-error
+          bin/cdxgen.js -t java repotests/java-sec-code -o bomresults/bom-java-sec-code-1.json --include-formulation --include-crypto --fail-on-error
+          bin/cdxgen.js -t java repotests/java-sec-code -o bomresults/bom-java-sec-code-2.json --required-only --fail-on-error
+          bin/cdxgen.js -r -t quarkus repotests/quarkus-quickstarts -o bomresults/bom-quarkus-quickstarts-quarkus.json --no-recurse --fail-on-error
+          bin/cdxgen.js -t python test/data/issue-2069 -o bomresults/issue-2069.json --fail-on-error --technique manifest-analysis -p
+          bin/cdxgen.js -t python repotests/django-DefectDojo -o bomresults/django-DefectDojo.json --deep --include-crypto --spec-version 1.6
+          bin/cdxgen.js -r -t ruby repotests/railsgoat -o bomresults/bom-ruby.json --fail-on-error --bom-audit
+      - name: repotests evidence and signing
+        shell: bash
+        run: |
+          bin/cdxgen.js -r -t java repotests/shiftleft-java-example -o bomresults/bom-java.json --generate-key-and-sign
+          node bin/evinse.js -i bomresults/bom-java.json -o bomresults/bom-java.evinse.json -l java --with-data-flow repotests/shiftleft-java-example
+          SBOM_SIGN_ALGORITHM=RS512 SBOM_SIGN_PRIVATE_KEY=bomresults/private.key SBOM_SIGN_PUBLIC_KEY=bomresults/public.key bin/cdxgen.js -r -t github repotests/shiftleft-java-example -o bomresults/bom-github.json
+          FETCH_LICENSE=false bin/cdxgen.js -t javascript repotests/shiftleft-ts-example -o bomresults/bom-ts-1.json --include-formulation
+          node bin/evinse.js -i bomresults/bom-ts-1.json -o bomresults/bom-ts.evinse.json -l js --with-data-flow repotests/shiftleft-ts-example
+          FETCH_LICENSE=true bin/cdxgen.js -t js repotests/shiftleft-ts-example --required-only -o bomresults/bom-ts-2.json --fail-on-error
+          bin/validate.js -i bomresults/bom-java-sec-code-1.json --format console --fail-severity critical
+
+  hosted-macos-mobile-tests:
+    needs: detect-hosted-suite-changes
+    if: github.event_name == 'pull_request' && needs.detect-hosted-suite-changes.outputs.run-macos-mobile == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up JDK 24
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: '24'
+          cache: 'gradle'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: true
+      - name: Setup swift
+        run: |
+          curl -O https://download.swift.org/swiftly/darwin/swiftly.pkg && \
+          installer -pkg swiftly.pkg -target CurrentUserHomeDirectory && \
+          ~/.swiftly/bin/swiftly init --quiet-shell-followup && \
+          . ~/.swiftly/env.sh && \
+          hash -r
+      - uses: ruby/setup-ruby@0cb964fd540e0a24c900370abf38a33466142735  # v1.305.0
+        with:
+          ruby-version: '3.4.9'
+      - name: setup-cocoapods
+        run: gem install cocoapods -v 1.16.2 --no-document
+        shell: bash
+      - name: pnpm install
+        run: |
+          pnpm install:frozen
+          mkdir -p repotests bomresults
+        env:
+          CI: true
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'malice00/cdxgen-expo-test'
+          ref: 'main'
+          path: 'repotests/expo-test'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'malice00/cdxgen-cocoapods-test'
+          ref: 'main'
+          path: 'repotests/cocoapods-test'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'apple/swift-markdown'
+          ref: '0.3.0'
+          path: 'repotests/swift-markdown'
+      - name: repotests mobile and macOS
+        shell: bash
+        env:
+          CDXGEN_THINK_MODE: true
+          COCOA_PODSPEC_REPLACEMENTS: >-
+            /([\s\S]+)/=require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")<NEWLINE>require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")<NEWLINE>$1
+          COCOA_RESOLVE_FROM_NODE_EXCLUSION_DIRS: sdks,third-party-podspecs
+          GRADLE_ARGS_DEPENDENCIES: "--configuration releaseRuntimeClasspath"
+          GRADLE_SKIP_MODULES: root
+        run: |
+          cd repotests/expo-test && npm ci --legacy-peer-deps && cd ios && pod install && cd ../../..
+          bin/cdxgen.js -t cocoapods repotests/expo-test -o bomresults/bom-expo-cocoapods.json
+          COCOA_RESOLVE_FROM_NODE=false bin/cdxgen.js -t cocoapods repotests/expo-test -o bomresults/bom-expo-cocoapods-no-node.json
+          bin/cdxgen.js -t gradle repotests/expo-test -o bomresults/bom-expo-gradle.json
+          COCOA_FULL_SCAN=false bin/cdxgen.js repotests/cocoapods-test -o bomresults/bom-cocoapods-full.json
+          COCOA_INCLUDED_TARGETS=cdxgenexpotest bin/cdxgen.js repotests/cocoapods-test -o bomresults/bom-cocoapods-target.json
+          . ~/.swiftly/env.sh
+          hash -r
+          CDXGEN_DEBUG_MODE=verbose bin/cdxgen.js -r -t swift repotests/swift-markdown -o bomresults/bom-swift.json
+
+  hosted-windows-dotnet-tests:
+    needs: detect-hosted-suite-changes
+    if: github.event_name == 'pull_request' && needs.detect-hosted-suite-changes.outputs.run-windows-dotnet == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: true
+      - name: pnpm install
+        shell: bash
+        run: |
+          pnpm install:frozen
+          mkdir -p repotests bomresults
+        env:
+          CI: true
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'HooliCorp/vulnerable_net_core'
+          path: 'repotests/vulnerable_net_core'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'HooliCorp/Goatly.NET'
+          path: 'repotests/Goatly.NET'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'fsprojects/FAKE'
+          ref: '6.0.0'
+          path: 'repotests/dotnet-paket'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'timheuer/SimpleFrameworkApp'
+          ref: 'master'
+          path: 'repotests/SimpleFrameworkApp'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'chabbasaad/Reporting-Windows-Application'
+          ref: 'master'
+          path: 'repotests/Reporting-Windows-Application'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'GoogleCloudPlatform/microservices-demo'
+          ref: 'v0.8.1'
+          path: 'repotests/microservices-demo'
+      - name: repotests windows dotnet
+        shell: bash
+        run: |
+          FETCH_LICENSE=true bin/cdxgen.js -r -t csharp repotests/vulnerable_net_core -o bomresults/bom-csharp2.json --include-formulation
+          FETCH_LICENSE=false bin/cdxgen.js -r repotests/Goatly.NET -o bomresults/bom-csharp3.json --include-formulation
+          bin/cdxgen.js -r -t dotnet repotests/dotnet-paket -o bomresults/bom-dotnet-paket.json --deep
+          FETCH_LICENSE=true bin/cdxgen.js -r -t dotnet repotests/dotnet-paket -o bomresults/bom-dotnet-paket-2.json --fail-on-error
+          bin/cdxgen.js -r -t dotnet-framework repotests/SimpleFrameworkApp -o bomresults/bom-dotnet-framework.json --bom-audit
+          bin/cdxgen.js -r -t dotnet-framework repotests/Reporting-Windows-Application -o bomresults/bom-dotnet-framework-reporting.json --deep
+          bin/cdxgen.js --no-recurse repotests/microservices-demo -o bomresults/bom-msd-1.json
+          bin/cdxgen.js -r -t universal repotests/microservices-demo -o bomresults/bom-yaml.json
+
+  hosted-arm64-smoke-tests:
+    needs: detect-hosted-suite-changes
+    if: github.event_name == 'pull_request' && needs.detect-hosted-suite-changes.outputs.run-arm-smoke == 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26.1'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: true
+      - name: pnpm install
+        run: |
+          pnpm install:frozen
+          mkdir -p repotests bomresults
+        env:
+          CI: true
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'aws-solutions/iot-device-simulator'
+          path: 'repotests/iot-device-simulator'
+          ref: 'v3.0.9'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'caddyserver/caddy'
+          path: 'repotests/caddy'
+          ref: 'v2.9.1'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'ShiftLeftSecurity/shiftleft-go-example'
+          path: 'repotests/shiftleft-go-example'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'flutter/gallery'
+          ref: 'v2.10.2'
+          path: 'repotests/gallery'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'Keats/validator'
+          ref: 'v0.15.0'
+          path: 'repotests/rs-validator'
+      - name: Install Rust v1.95.0
+        run: rustup toolchain install 1.95.0 || true
+      - name: repotests arm64 smoke
+        shell: bash
+        run: |
+          bin/cdxgen.js -t js -o bomresults/bom-iot.json repotests/iot-device-simulator --fail-on-error
+          bin/cdxgen.js -r -t go repotests/caddy -o bomresults/bom-caddy.json --fail-on-error
+          FETCH_LICENSE=false bin/cdxgen.js -r -t golang repotests/shiftleft-go-example -o bomresults/bom-go.json --fail-on-error --spec-version 1.6 --export-proto
+          bin/cdxgen.js -r -t dart repotests/gallery -o bomresults/bom-pub.json --fail-on-error --bom-audit
+          cargo generate-lockfile --manifest-path repotests/rs-validator/validator/Cargo.toml
+          bin/cdxgen.js -r -t rust repotests/rs-validator -o bomresults/bom-rs-validator.json --fail-on-error
+          bin/validate.js -i bomresults/bom-pub.json -o bomresults/bom-pub.sarif --report sarif --fail-severity critical
+
+  secure-mode-smoke-tests:
+    needs: detect-hosted-suite-changes
+    if: github.event_name == 'pull_request' && needs.detect-hosted-suite-changes.outputs.run-secure-mode == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      CDXGEN_DEBUG_MODE: verbose
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up JDK 24
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: 'temurin'
+          java-version: '24'
+          cache: 'maven'
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.26.1'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - name: Use Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: true
+      - name: pnpm install
+        run: |
+          pnpm install:frozen
+          mkdir -p repotests bomresults
+        env:
+          CI: true
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'hoolicorp/java-sec-code'
+          path: 'repotests/java-sec-code'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'quarkusio/quarkus-quickstarts'
+          path: 'repotests/quarkus-quickstarts'
+          ref: '3.17.3'
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          repository: 'aws-solutions/iot-device-simulator'
+          path: 'repotests/iot-device-simulator'
+          ref: 'v3.0.9'
+      - name: repotests - no exec
+        run: |
+          bin/cdxgen.js -t pnpm ${GITHUB_WORKSPACE} --no-recurse -o ${GITHUB_WORKSPACE}/bomresults/bom-self.json --fail-on-error
+        shell: bash
+        env:
+          NODE_OPTIONS: "--permission --allow-fs-read=${{ runner.temp }}/cdxgen-repotests/* --allow-fs-read=${{ github.workspace }}/* --allow-fs-write=${{ github.workspace }}/bomresults/bom-self.json --trace-warnings"
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+          JAVA_HOME: ""
+      - name: repotests - allowlist
+        run: |
+          bin/cdxgen.js -t pnpm ${GITHUB_WORKSPACE} --no-recurse -o ${GITHUB_WORKSPACE}/bomresults/bom-self.json --fail-on-error
+        shell: bash
+        env:
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+          JAVA_HOME: ""
+          CDXGEN_ALLOWED_COMMANDS: "node"
+          CDXGEN_ALLOWED_HOSTS: "registry.npmjs.org"
+          CDXGEN_TRACE_MODE: true
+      - name: repotests secure smoke
+        run: |
+          CDXGEN_ALLOWED_COMMANDS=mvn bin/cdxgen.js -t java ${GITHUB_WORKSPACE}/repotests/java-sec-code -o ${GITHUB_WORKSPACE}/bomresults/bom-java-sec-code-1.json --fail-on-error
+          CDXGEN_ALLOWED_COMMANDS=mvn bin/cdxgen.js -r -t quarkus ${GITHUB_WORKSPACE}/repotests/quarkus-quickstarts -o ${GITHUB_WORKSPACE}/bomresults/bom-quarkus-quickstarts-quarkus.json --no-recurse --fail-on-error
+          CDXGEN_ALLOWED_COMMANDS=npm bin/cdxgen.js -t js -o ${GITHUB_WORKSPACE}/bomresults/bom-iot.json ${GITHUB_WORKSPACE}/repotests/iot-device-simulator --fail-on-error
+        shell: bash
+        env:
+          NODE_OPTIONS: "--permission --allow-fs-read=/home/runner/* --allow-fs-read=/tmp/* --allow-fs-read=/run/user/1001/* --allow-fs-read=/opt/hostedtoolcache/* --allow-fs-write=/tmp/* --allow-fs-read=/Users/runner/* --allow-fs-read=${{ github.workspace }}/* --allow-fs-write=${{ github.workspace }}/bomresults/*.json --allow-fs-read=${{ runner.temp }}/* --allow-fs-write=${{ runner.temp }}/* --allow-child-process --trace-warnings"
+          CDXGEN_TEMP_DIR: ${{ runner.temp }}/cdxgen-repotests
+          CDXGEN_TRACE_ID: foo
+          CDXGEN_DEBUG_MODE: debug
+
   cli-tests:
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: true
       matrix:
         java-version: ['24']
-        os: ['self-hosted-ubuntu', 'ubuntu-24.04-arm', 'windows-latest', 'macos-15']
+        os: ['ubuntu-24.04', 'ubuntu-24.04-arm', 'windows-latest', 'macos-15']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -194,7 +665,7 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version-file: .nvmrc
-          package-manager-cache: false
+          package-manager-cache: true
       - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
         with:
           deno-version: 2.7.5
@@ -1012,6 +1483,7 @@ jobs:
           path: bomresults
 
   secure-mode-tests:
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: true
       matrix:
@@ -1042,7 +1514,7 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version-file: .nvmrc
-          package-manager-cache: false
+          package-manager-cache: true
       - name: Trim CI agent
         if: matrix.os == 'ubuntu-24.04' || matrix.os == 'ubuntu-24.04-arm'
         run: |
