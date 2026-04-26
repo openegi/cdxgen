@@ -230,7 +230,7 @@ jobs:
             'run_all': run_all,
             'run_linux_core': True,
             'run_macos_mobile': run_all or matches('swift', 'cocoa', 'gradle', 'android', 'expo'),
-            'run_windows_dotnet': run_all or matches('dotnet', 'csharp', 'tsproj', 'framework', 'windows'),
+            'run_windows_dotnet': run_all or matches('dotnet', 'csharp', 'csproj', 'framework', 'windows'),
             'run_arm_smoke': run_all or matches('go', 'golang', 'rust', 'cargo', 'dart', 'clojure'),
             'run_secure_mode': True,
           }
@@ -407,6 +407,7 @@ jobs:
         shell: bash
         env:
           CDXGEN_THINK_MODE: true
+          # Required so the Expo smoke test resolves the generated Podfile helpers consistently.
           COCOA_PODSPEC_REPLACEMENTS: >-
             /([\s\S]+)/=require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")<NEWLINE>require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")<NEWLINE>$1
           COCOA_RESOLVE_FROM_NODE_EXCLUSION_DIRS: sdks,third-party-podspecs
