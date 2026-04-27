@@ -690,6 +690,10 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Ensure cargo path on self-hosted ubuntu
+        if: matrix.os == 'self-hosted-ubuntu'
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
         with:
           deno-version: 2.7.5
