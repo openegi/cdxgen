@@ -11,7 +11,7 @@ COMMON_SBOM_ARGS=(
   --no-install-deps
 )
 
-CAXA_PACKAGE="${CAXA_PACKAGE:-@appthreat/caxa@^3.0.0}"
+CAXA_PACKAGE="${CAXA_PACKAGE:-@appthreat/caxa@^3.0.1}"
 
 run_caxa() {
   pnpm --package="$CAXA_PACKAGE" dlx caxa "$@"
@@ -169,22 +169,6 @@ resolve_hbom_plugin_package_name() {
   '
 }
 
-prune_hbom_only_plugins() {
-  find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" -o -path "*/plugins/trustinspector" \) -prune -exec rm -rf {} +
-}
-
-verify_hbom_only_plugins_pruned() {
-  local remaining_plugins
-
-  remaining_plugins="$(find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" -o -path "*/plugins/trustinspector" \) -print)"
-
-  if [[ -n "$remaining_plugins" ]]; then
-    echo "HBOM SEA preflight failed: expected only the osquery plugin directory to remain before packaging hbom." >&2
-    echo "$remaining_plugins" >&2
-    exit 1
-  fi
-}
-
 rm -rf \
   *.cdx.json \
   *.md \
@@ -224,8 +208,6 @@ postbuild_binaries cdx-audit cdx-verify cdx-sign cdx-validate cdx-convert
 
 install_optional_dependencies "$(resolve_hbom_plugin_package_name)" @cdxgen/cdx-hbom
 rm -rf .pnpm-store
-prune_hbom_only_plugins
-verify_hbom_only_plugins_pruned
 
 build_binary cdx-hbom .cdx-hbom-metadata.json bin/hbom.js
 

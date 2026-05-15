@@ -16,6 +16,8 @@ $commonSbomArgs = @(
   "--no-install-deps"
 )
 
+$caxaPackage = if ($env:CAXA_PACKAGE) { $env:CAXA_PACKAGE } else { "@appthreat/caxa@^3.0.1" }
+
 function Invoke-BinaryBuild {
   param(
     [Parameter(Mandatory = $true)]
@@ -26,7 +28,7 @@ function Invoke-BinaryBuild {
     [string]$EntryPoint
   )
 
-  pnpm --package=@appthreat/caxa dlx caxa --input . --metadata-file $MetadataFile --output "$Output.exe" -- "{{caxa}}/node_modules/.bin/node" "{{caxa}}/$EntryPoint"
+  pnpm --package=$caxaPackage dlx caxa --input . --metadata-file $MetadataFile --output "$Output.exe" -- "{{caxa}}/node_modules/.bin/node" "{{caxa}}/$EntryPoint"
   node bin/cdxgen.js @commonSbomArgs -o ".${Output}-postbuild.cdx.json"
   & ".\$Output.exe" --version
   & ".\$Output.exe" --help
@@ -103,32 +105,6 @@ function Get-HbomPluginsPackageName {
   return $packageName
 }
 
-function Remove-HbomOnlyPlugins {
-  Get-ChildItem -Path node_modules -Directory -Recurse -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.Name -in @("dosai", "sourcekitten", "trivy", "trustinspector") -and
-      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy|trustinspector)$'
-    } |
-    ForEach-Object {
-      Remove-Item -Path $_.FullName -Force -Recurse -ErrorAction SilentlyContinue
-    }
-}
-
-function Assert-HbomOnlyPluginsPruned {
-  $remainingPlugins = Get-ChildItem -Path node_modules -Directory -Recurse -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.Name -in @("dosai", "sourcekitten", "trivy", "trustinspector") -and
-      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy|trustinspector)$'
-    } |
-    Select-Object -ExpandProperty FullName
-
-  if ($remainingPlugins) {
-    Write-Error "HBOM SEA preflight failed: expected only the osquery plugin directory to remain before packaging hbom."
-    $remainingPlugins | ForEach-Object { Write-Error $_ }
-    throw "HBOM SEA plugin pruning verification failed"
-  }
-}
-
 $cleanupTargets = @(
   "*.md",
   "ci",
@@ -166,8 +142,6 @@ Invoke-BinaryBuild -Output "cdx-convert" -MetadataFile ".cdx-convert-metadata.js
 
 Install-OptionalDependencies -PackageNames @((Get-HbomPluginsPackageName), "@cdxgen/cdx-hbom")
 Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
-Remove-HbomOnlyPlugins
-Assert-HbomOnlyPluginsPruned
 Invoke-BinaryBuild -Output "cdx-hbom" -MetadataFile ".cdx-hbom-metadata.json" -EntryPoint "bin/hbom.js"
 
 Reset-WithoutOptionalDependencies
