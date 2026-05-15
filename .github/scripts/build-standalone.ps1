@@ -72,7 +72,21 @@ function Install-OptionalDependency {
   )
 
   $packageVersion = Get-OptionalDependencyVersion -PackageName $PackageName
+  $packageJsonBackup = [System.IO.Path]::GetTempFileName()
+  Copy-Item -Path package.json -Destination $packageJsonBackup -Force
+
+  $lockfileBackup = $null
+  if (Test-Path pnpm-lock.yaml) {
+    $lockfileBackup = [System.IO.Path]::GetTempFileName()
+    Copy-Item -Path pnpm-lock.yaml -Destination $lockfileBackup -Force
+  }
+
   pnpm add --prod --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy "$PackageName@$packageVersion"
+
+  Move-Item -Path $packageJsonBackup -Destination package.json -Force
+  if ($lockfileBackup) {
+    Move-Item -Path $lockfileBackup -Destination pnpm-lock.yaml -Force
+  }
 }
 
 function Get-HbomPluginsPackageName {

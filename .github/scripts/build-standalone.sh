@@ -124,13 +124,25 @@ read_optional_dependency_version() {
 install_optional_dependency() {
   local package_name="$1"
   local package_version
+  local package_json_backup
+  local lockfile_backup=""
 
   package_version="$(read_optional_dependency_version "$package_name")"
+  package_json_backup="$(mktemp)"
+  cp package.json "$package_json_backup"
+  if [[ -f pnpm-lock.yaml ]]; then
+    lockfile_backup="$(mktemp)"
+    cp pnpm-lock.yaml "$lockfile_backup"
+  fi
   pnpm add --prod \
     --config.node-linker=hoisted \
     --config.strict-dep-builds=true \
     --package-import-method copy \
     "$package_name@$package_version"
+  mv "$package_json_backup" package.json
+  if [[ -n "$lockfile_backup" ]]; then
+    mv "$lockfile_backup" pnpm-lock.yaml
+  fi
 }
 
 resolve_hbom_plugin_package_name() {
