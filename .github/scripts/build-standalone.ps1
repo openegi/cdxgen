@@ -32,6 +32,25 @@ function Invoke-BinaryBuild {
   & ".\$Output.exe" --help
 }
 
+function Install-ProductionDependencies {
+  param(
+    [switch]$NoOptional
+  )
+
+  $installArgs = @("install:prod", "--config.node-linker=hoisted")
+  if ($NoOptional) {
+    $installArgs += "--no-optional"
+  }
+
+  pnpm @installArgs
+  Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
+}
+
+function Reset-WithoutOptionalDependencies {
+  Remove-Item -Path node_modules -Force -Recurse -ErrorAction SilentlyContinue
+  Install-ProductionDependencies -NoOptional
+}
+
 function Get-OptionalDependencyVersion {
   param(
     [Parameter(Mandatory = $true)]
@@ -56,11 +75,26 @@ function Install-OptionalDependency {
   pnpm add --prod --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy "$PackageName@$packageVersion"
 }
 
+function Get-HbomPluginsPackageName {
+  $packageJson = Get-Content -Path package.json -Raw | ConvertFrom-Json
+  $packageName = "@cdxgen/cdxgen-plugins-bin-$env:TARGET_OS-$env:TARGET_ARCH"
+
+  if ($env:TARGET_OS -eq "linux" -and $env:TARGET_LIBC -eq "musl") {
+    $packageName = "@cdxgen/cdxgen-plugins-bin-linuxmusl-$env:TARGET_ARCH"
+  }
+
+  if (-not $packageJson.optionalDependencies.PSObject.Properties[$packageName].Value) {
+    throw "Missing HBOM plugins optional dependency for $env:TARGET_OS/$env:TARGET_ARCH/$env:TARGET_LIBC: $packageName"
+  }
+
+  return $packageName
+}
+
 function Remove-HbomOnlyPlugins {
   Get-ChildItem -Path node_modules -Directory -Recurse -ErrorAction SilentlyContinue |
     Where-Object {
-      $_.Name -in @("dosai", "sourcekitten", "trivy") -and
-      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy)$'
+      $_.Name -in @("dosai", "sourcekitten", "trivy", "trustinspector") -and
+      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy|trustinspector)$'
     } |
     ForEach-Object {
       Remove-Item -Path $_.FullName -Force -Recurse -ErrorAction SilentlyContinue
@@ -70,13 +104,13 @@ function Remove-HbomOnlyPlugins {
 function Assert-HbomOnlyPluginsPruned {
   $remainingPlugins = Get-ChildItem -Path node_modules -Directory -Recurse -ErrorAction SilentlyContinue |
     Where-Object {
-      $_.Name -in @("dosai", "sourcekitten", "trivy") -and
-      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy)$'
+      $_.Name -in @("dosai", "sourcekitten", "trivy", "trustinspector") -and
+      $_.FullName -match '[\\/]plugins[\\/](dosai|sourcekitten|trivy|trustinspector)$'
     } |
     Select-Object -ExpandProperty FullName
 
   if ($remainingPlugins) {
-    Write-Error "HBOM SEA preflight failed: expected dosai, sourcekitten, and trivy plugin directories to be pruned before packaging hbom."
+    Write-Error "HBOM SEA preflight failed: expected only the osquery plugin directory to remain before packaging hbom."
     $remainingPlugins | ForEach-Object { Write-Error $_ }
     throw "HBOM SEA plugin pruning verification failed"
   }
@@ -104,24 +138,27 @@ Get-ChildItem -Path lib -Filter "*.poku.js" -Recurse | ForEach-Object {
   Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
 }
 
-pnpm install:prod --config.node-linker=hoisted
-Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
+Install-ProductionDependencies
 
 Invoke-BinaryBuild -Output "cdxgen" -MetadataFile ".cdxgen-metadata.json" -EntryPoint "bin/cdxgen.js"
+
+Reset-WithoutOptionalDependencies
+
+Invoke-BinaryBuild -Output "cdxgen-slim" -MetadataFile ".cdxgen-slim-metadata.json" -EntryPoint "bin/cdxgen.js"
 Invoke-BinaryBuild -Output "cdx-audit" -MetadataFile ".cdx-audit-metadata.json" -EntryPoint "bin/audit.js"
 Invoke-BinaryBuild -Output "cdx-verify" -MetadataFile ".cdx-verify-metadata.json" -EntryPoint "bin/verify.js"
 Invoke-BinaryBuild -Output "cdx-sign" -MetadataFile ".cdx-sign-metadata.json" -EntryPoint "bin/sign.js"
 Invoke-BinaryBuild -Output "cdx-validate" -MetadataFile ".cdx-validate-metadata.json" -EntryPoint "bin/validate.js"
 Invoke-BinaryBuild -Output "cdx-convert" -MetadataFile ".cdx-convert-metadata.json" -EntryPoint "bin/convert.js"
+
+Install-OptionalDependency -PackageName (Get-HbomPluginsPackageName)
+Install-OptionalDependency -PackageName "@cdxgen/cdx-hbom"
+Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
 Remove-HbomOnlyPlugins
 Assert-HbomOnlyPluginsPruned
 Invoke-BinaryBuild -Output "hbom" -MetadataFile ".hbom-metadata.json" -EntryPoint "bin/hbom.js"
 
-Remove-Item -Path node_modules -Force -Recurse -ErrorAction SilentlyContinue
-pnpm install:prod --config.node-linker=hoisted --no-optional
-Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
-
-Invoke-BinaryBuild -Output "cdxgen-slim" -MetadataFile ".cdxgen-slim-metadata.json" -EntryPoint "bin/cdxgen.js"
+Reset-WithoutOptionalDependencies
 
 Install-OptionalDependency -PackageName "@cdxgen/cdx-hbom"
 Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue

@@ -17,6 +17,16 @@ run_caxa() {
   pnpm --package="$CAXA_PACKAGE" dlx caxa "$@"
 }
 
+install_production_dependencies() {
+  pnpm install:prod --config.node-linker=hoisted "$@"
+  rm -rf .pnpm-store
+}
+
+reinstall_without_optional_dependencies() {
+  rm -rf node_modules
+  install_production_dependencies --no-optional
+}
+
 create_targets_file() {
   local file_path="$1"
   shift
@@ -123,17 +133,42 @@ install_optional_dependency() {
     "$package_name@$package_version"
 }
 
+resolve_hbom_plugin_package_name() {
+  node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+    const targetOs = process.env.TARGET_OS;
+    const targetArch = process.env.TARGET_ARCH;
+    const targetLibc = process.env.TARGET_LIBC;
+    let packageName = `@cdxgen/cdxgen-plugins-bin-${targetOs}-${targetArch}`;
+
+    if (targetOs === "linux" && targetLibc === "musl") {
+      packageName = `@cdxgen/cdxgen-plugins-bin-linuxmusl-${targetArch}`;
+    }
+
+    if (!packageJson.optionalDependencies?.[packageName]) {
+      console.error(
+        `Missing HBOM plugins optional dependency for ${targetOs}/${targetArch}/${targetLibc}: ${packageName}`,
+      );
+      process.exit(1);
+    }
+
+    console.log(packageName);
+  '
+}
+
 prune_hbom_only_plugins() {
-  find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" \) -prune -exec rm -rf {} +
+  find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" -o -path "*/plugins/trustinspector" \) -prune -exec rm -rf {} +
 }
 
 verify_hbom_only_plugins_pruned() {
   local remaining_plugins
 
-  remaining_plugins="$(find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" \) -print)"
+  remaining_plugins="$(find node_modules -type d \( -path "*/plugins/dosai" -o -path "*/plugins/sourcekitten" -o -path "*/plugins/trivy" -o -path "*/plugins/trustinspector" \) -print)"
 
   if [[ -n "$remaining_plugins" ]]; then
-    echo "HBOM SEA preflight failed: expected dosai, sourcekitten, and trivy plugin directories to be pruned before packaging hbom." >&2
+    echo "HBOM SEA preflight failed: expected only the osquery plugin directory to remain before packaging hbom." >&2
     echo "$remaining_plugins" >&2
     exit 1
   fi
@@ -158,11 +193,15 @@ rm -rf \
 find lib -name "*.poku.js" -exec rm -f {} +
 rm -rf types
 
-pnpm install:prod --config.node-linker=hoisted
-rm -rf .pnpm-store
+install_production_dependencies
+
+build_binary cdxgen .cdxgen-metadata.json bin/cdxgen.js
+
+reinstall_without_optional_dependencies
+
+build_binary cdxgen-slim .cdxgen-slim-metadata.json bin/cdxgen.js
 
 create_targets_file .caxa-targets-core.json \
-  'cdxgen::.cdxgen-metadata.json::bin/cdxgen.js' \
   'cdx-audit::.cdx-audit-metadata.json::bin/audit.js' \
   'cdx-verify::.cdx-verify-metadata.json::bin/verify.js' \
   'cdx-sign::.cdx-sign-metadata.json::bin/sign.js' \
@@ -170,19 +209,17 @@ create_targets_file .caxa-targets-core.json \
   'cdx-convert::.cdx-convert-metadata.json::bin/convert.js'
 build_binaries .caxa-targets-core.json
 rm -f .caxa-targets-core.json
-postbuild_binaries cdxgen cdx-audit cdx-verify cdx-sign cdx-validate cdx-convert
+postbuild_binaries cdx-audit cdx-verify cdx-sign cdx-validate cdx-convert
 
+install_optional_dependency "$(resolve_hbom_plugin_package_name)"
+install_optional_dependency @cdxgen/cdx-hbom
+rm -rf .pnpm-store
 prune_hbom_only_plugins
 verify_hbom_only_plugins_pruned
 
 build_binary hbom .hbom-metadata.json bin/hbom.js
 
-rm -rf node_modules
-pnpm install:prod --config.node-linker=hoisted --no-optional
-rm -rf .pnpm-store
-
-build_binary cdxgen-slim .cdxgen-slim-metadata.json bin/cdxgen.js
-
+reinstall_without_optional_dependencies
 install_optional_dependency @cdxgen/cdx-hbom
 rm -rf .pnpm-store
 
