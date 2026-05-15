@@ -102,44 +102,42 @@ postbuild_binaries() {
   done
 }
 
-read_optional_dependency_version() {
-  local package_name="$1"
-
-  node --input-type=module -e '
-    import { readFileSync } from "node:fs";
-
-    const packageName = process.argv[1];
-    const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
-    const packageVersion = packageJson.optionalDependencies?.[packageName];
-
-    if (!packageVersion) {
-      console.error(`Missing optional dependency version for ${packageName}`);
-      process.exit(1);
-    }
-
-    console.log(packageVersion);
-  ' "$package_name"
-}
-
-install_optional_dependency() {
-  local package_name="$1"
-  local package_version
+install_optional_dependencies() {
   local package_json_backup
   local lockfile_backup=""
 
-  package_version="$(read_optional_dependency_version "$package_name")"
   package_json_backup="$(mktemp)"
   cp package.json "$package_json_backup"
   if [[ -f pnpm-lock.yaml ]]; then
     lockfile_backup="$(mktemp)"
     cp pnpm-lock.yaml "$lockfile_backup"
   fi
-  pnpm add --prod \
+  node --input-type=module - "$@" <<'NODE'
+    import { readFileSync, writeFileSync } from "node:fs";
+
+    const [, , ...packageNames] = process.argv;
+    const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+
+    packageJson.dependencies ??= {};
+
+    for (const packageName of packageNames) {
+      const packageVersion = packageJson.optionalDependencies?.[packageName];
+      if (!packageVersion) {
+        console.error(`Missing optional dependency version for ${packageName}`);
+        process.exit(1);
+      }
+      packageJson.dependencies[packageName] = packageVersion;
+      delete packageJson.optionalDependencies[packageName];
+    }
+
+    writeFileSync("package.json", `${JSON.stringify(packageJson, null, 2)}\n`);
+NODE
+  pnpm install --prod \
+    --no-frozen-lockfile \
     --no-optional \
     --config.node-linker=hoisted \
     --config.strict-dep-builds=true \
-    --package-import-method copy \
-    "$package_name@$package_version"
+    --package-import-method copy
   mv "$package_json_backup" package.json
   if [[ -n "$lockfile_backup" ]]; then
     mv "$lockfile_backup" pnpm-lock.yaml
@@ -224,16 +222,19 @@ build_binaries .caxa-targets-core.json
 rm -f .caxa-targets-core.json
 postbuild_binaries cdx-audit cdx-verify cdx-sign cdx-validate cdx-convert
 
-install_optional_dependency "$(resolve_hbom_plugin_package_name)"
-install_optional_dependency @cdxgen/cdx-hbom
+install_optional_dependencies "$(resolve_hbom_plugin_package_name)" @cdxgen/cdx-hbom
 rm -rf .pnpm-store
 prune_hbom_only_plugins
 verify_hbom_only_plugins_pruned
 
-build_binary hbom .hbom-metadata.json bin/hbom.js
+build_binary cdx-hbom .cdx-hbom-metadata.json bin/hbom.js
 
 reinstall_without_optional_dependencies
-install_optional_dependency @cdxgen/cdx-hbom
+install_optional_dependencies @cdxgen/cdx-hbom
 rm -rf .pnpm-store
 
-build_binary hbom-slim .hbom-slim-metadata.json bin/hbom.js
+build_binary cdx-hbom-slim .cdx-hbom-slim-metadata.json bin/hbom.js
+mv cdx-hbom hbom
+mv .cdx-hbom-postbuild.cdx.json .hbom-postbuild.cdx.json
+mv cdx-hbom-slim hbom-slim
+mv .cdx-hbom-slim-postbuild.cdx.json .hbom-slim-postbuild.cdx.json

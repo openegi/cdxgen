@@ -51,27 +51,12 @@ function Reset-WithoutOptionalDependencies {
   Install-ProductionDependencies -NoOptional
 }
 
-function Get-OptionalDependencyVersion {
+function Install-OptionalDependencies {
   param(
     [Parameter(Mandatory = $true)]
-    [string]$PackageName
+    [string[]]$PackageNames
   )
 
-  $packageJson = Get-Content -Path package.json -Raw | ConvertFrom-Json
-  $packageVersion = $packageJson.optionalDependencies.PSObject.Properties[$PackageName].Value
-  if (-not $packageVersion) {
-    throw "Missing optional dependency version for $PackageName"
-  }
-  return $packageVersion
-}
-
-function Install-OptionalDependency {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$PackageName
-  )
-
-  $packageVersion = Get-OptionalDependencyVersion -PackageName $PackageName
   $packageJsonBackup = [System.IO.Path]::GetTempFileName()
   Copy-Item -Path package.json -Destination $packageJsonBackup -Force
 
@@ -81,7 +66,21 @@ function Install-OptionalDependency {
     Copy-Item -Path pnpm-lock.yaml -Destination $lockfileBackup -Force
   }
 
-  pnpm add --prod --no-optional --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy "$PackageName@$packageVersion"
+  $packageJson = Get-Content -Path package.json -Raw | ConvertFrom-Json -AsHashtable
+  if (-not $packageJson.ContainsKey("dependencies")) {
+    $packageJson["dependencies"] = [ordered]@{}
+  }
+  foreach ($packageName in $PackageNames) {
+    $packageVersion = $packageJson["optionalDependencies"][$packageName]
+    if (-not $packageVersion) {
+      throw "Missing optional dependency version for $packageName"
+    }
+    $packageJson["dependencies"][$packageName] = $packageVersion
+    $packageJson["optionalDependencies"].Remove($packageName)
+  }
+  $packageJson | ConvertTo-Json -Depth 100 | Set-Content -Path package.json
+
+  pnpm install --prod --no-frozen-lockfile --no-optional --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy
 
   Move-Item -Path $packageJsonBackup -Destination package.json -Force
   if ($lockfileBackup) {
@@ -165,16 +164,19 @@ Invoke-BinaryBuild -Output "cdx-sign" -MetadataFile ".cdx-sign-metadata.json" -E
 Invoke-BinaryBuild -Output "cdx-validate" -MetadataFile ".cdx-validate-metadata.json" -EntryPoint "bin/validate.js"
 Invoke-BinaryBuild -Output "cdx-convert" -MetadataFile ".cdx-convert-metadata.json" -EntryPoint "bin/convert.js"
 
-Install-OptionalDependency -PackageName (Get-HbomPluginsPackageName)
-Install-OptionalDependency -PackageName "@cdxgen/cdx-hbom"
+Install-OptionalDependencies -PackageNames @((Get-HbomPluginsPackageName), "@cdxgen/cdx-hbom")
 Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
 Remove-HbomOnlyPlugins
 Assert-HbomOnlyPluginsPruned
-Invoke-BinaryBuild -Output "hbom" -MetadataFile ".hbom-metadata.json" -EntryPoint "bin/hbom.js"
+Invoke-BinaryBuild -Output "cdx-hbom" -MetadataFile ".cdx-hbom-metadata.json" -EntryPoint "bin/hbom.js"
 
 Reset-WithoutOptionalDependencies
 
-Install-OptionalDependency -PackageName "@cdxgen/cdx-hbom"
+Install-OptionalDependencies -PackageNames "@cdxgen/cdx-hbom"
 Remove-Item -Path .pnpm-store -Force -Recurse -ErrorAction SilentlyContinue
 
-Invoke-BinaryBuild -Output "hbom-slim" -MetadataFile ".hbom-slim-metadata.json" -EntryPoint "bin/hbom.js"
+Invoke-BinaryBuild -Output "cdx-hbom-slim" -MetadataFile ".cdx-hbom-slim-metadata.json" -EntryPoint "bin/hbom.js"
+Move-Item -Path "cdx-hbom.exe" -Destination "hbom.exe" -Force
+Move-Item -Path ".cdx-hbom-postbuild.cdx.json" -Destination ".hbom-postbuild.cdx.json" -Force
+Move-Item -Path "cdx-hbom-slim.exe" -Destination "hbom-slim.exe" -Force
+Move-Item -Path ".cdx-hbom-slim-postbuild.cdx.json" -Destination ".hbom-slim-postbuild.cdx.json" -Force
