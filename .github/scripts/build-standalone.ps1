@@ -81,7 +81,7 @@ function Install-OptionalDependency {
     Copy-Item -Path pnpm-lock.yaml -Destination $lockfileBackup -Force
   }
 
-  pnpm add --prod --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy "$PackageName@$packageVersion"
+  pnpm add --prod --no-optional --config.node-linker=hoisted --config.strict-dep-builds=true --package-import-method copy "$PackageName@$packageVersion"
 
   Move-Item -Path $packageJsonBackup -Destination package.json -Force
   if ($lockfileBackup) {

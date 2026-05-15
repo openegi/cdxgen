@@ -135,6 +135,7 @@ install_optional_dependency() {
     cp pnpm-lock.yaml "$lockfile_backup"
   fi
   pnpm add --prod \
+    --no-optional \
     --config.node-linker=hoisted \
     --config.strict-dep-builds=true \
     --package-import-method copy \
