@@ -58,7 +58,7 @@ build_binaries() {
   )
 
   if [[ "$(uname -s)" == "Linux" ]]; then
-    caxa_args+=(--upx)
+    caxa_args+=(--upx --upx-args '--best' '--lzma')
   fi
 
   run_caxa "${caxa_args[@]}"
@@ -75,7 +75,7 @@ build_binary() {
   )
 
   if [[ "$(uname -s)" == "Linux" ]]; then
-    caxa_args+=(--upx)
+    caxa_args+=(--upx --upx-args '--best' '--lzma')
   fi
 
   caxa_args+=(-- "{{caxa}}/node_modules/.bin/node" "{{caxa}}/$entry_point")
