@@ -12,6 +12,7 @@ COMMON_SBOM_ARGS=(
 )
 
 CAXA_PACKAGE="${CAXA_PACKAGE:-@appthreat/caxa@^3.0.1}"
+ARTIFACT_STAGING_DIR="$(mktemp -d)"
 
 run_caxa() {
   pnpm --package="$CAXA_PACKAGE" dlx caxa "$@"
@@ -20,6 +21,11 @@ run_caxa() {
 install_production_dependencies() {
   pnpm install:prod --config.node-linker=hoisted "$@"
   rm -rf .pnpm-store
+}
+
+reinstall_production_dependencies() {
+  rm -rf node_modules
+  install_production_dependencies
 }
 
 reinstall_without_optional_dependencies() {
@@ -85,15 +91,18 @@ build_binary() {
   chmod +x "$output"
   "./$output" --version
   "./$output" --help
+  stage_binary_artifacts "$output" "$metadata_file"
 }
 
 postbuild_binary_artifacts() {
   local output="$1"
+  local metadata_file=".${output}-metadata.json"
 
   node bin/cdxgen.js "${COMMON_SBOM_ARGS[@]}" -o ".${output}-postbuild.cdx.json"
   chmod +x "$output"
   "./$output" --version
   "./$output" --help
+  stage_binary_artifacts "$output" "$metadata_file"
 }
 
 postbuild_binaries() {
@@ -102,9 +111,28 @@ postbuild_binaries() {
   done
 }
 
+stage_binary_artifacts() {
+  local output="$1"
+  local metadata_file="$2"
+
+  mv "$output" "$ARTIFACT_STAGING_DIR/$output"
+  mv ".${output}-postbuild.cdx.json" "$ARTIFACT_STAGING_DIR/.${output}-postbuild.cdx.json"
+  rm -f "$metadata_file"
+}
+
+restore_staged_artifacts() {
+  shopt -s nullglob
+  for artifact in "$ARTIFACT_STAGING_DIR"/* "$ARTIFACT_STAGING_DIR"/.*.json; do
+    [[ -e "$artifact" ]] || continue
+    mv "$artifact" .
+  done
+  rmdir "$ARTIFACT_STAGING_DIR"
+}
+
 install_optional_dependencies() {
   local package_json_backup
   local lockfile_backup=""
+  local install_status=0
 
   package_json_backup="$(mktemp)"
   cp package.json "$package_json_backup"
@@ -112,7 +140,7 @@ install_optional_dependencies() {
     lockfile_backup="$(mktemp)"
     cp pnpm-lock.yaml "$lockfile_backup"
   fi
-  node --input-type=module - "$@" <<'NODE'
+  node --input-type=module - "$@" <<'NODE' || install_status=$?
     import { readFileSync, writeFileSync } from "node:fs";
 
     const [, , ...packageNames] = process.argv;
@@ -132,16 +160,19 @@ install_optional_dependencies() {
 
     writeFileSync("package.json", `${JSON.stringify(packageJson, null, 2)}\n`);
 NODE
-  pnpm install --prod \
-    --no-frozen-lockfile \
-    --no-optional \
-    --config.node-linker=hoisted \
-    --config.strict-dep-builds=true \
-    --package-import-method copy
+  if [[ "$install_status" -eq 0 ]]; then
+    pnpm install --prod \
+      --no-frozen-lockfile \
+      --no-optional \
+      --config.node-linker=hoisted \
+      --config.strict-dep-builds=true \
+      --package-import-method copy || install_status=$?
+  fi
   mv "$package_json_backup" package.json
   if [[ -n "$lockfile_backup" ]]; then
     mv "$lockfile_backup" pnpm-lock.yaml
   fi
+  return "$install_status"
 }
 
 resolve_hbom_plugin_package_name() {
@@ -172,6 +203,17 @@ resolve_hbom_plugin_package_name() {
 rm -rf \
   *.cdx.json \
   *.md \
+  cdx-audit \
+  cdx-convert \
+  cdx-hbom \
+  cdx-hbom-slim \
+  cdx-sign \
+  cdx-validate \
+  cdx-verify \
+  cdxgen \
+  cdxgen-slim \
+  hbom \
+  hbom-slim \
   ci \
   contrib \
   devenv.* \
@@ -196,6 +238,8 @@ reinstall_without_optional_dependencies
 
 build_binary cdxgen-slim .cdxgen-slim-metadata.json bin/cdxgen.js
 
+reinstall_production_dependencies
+
 create_targets_file .caxa-targets-core.json \
   'cdx-audit::.cdx-audit-metadata.json::bin/audit.js' \
   'cdx-verify::.cdx-verify-metadata.json::bin/verify.js' \
@@ -206,7 +250,8 @@ build_binaries .caxa-targets-core.json
 rm -f .caxa-targets-core.json
 postbuild_binaries cdx-audit cdx-verify cdx-sign cdx-validate cdx-convert
 
-install_optional_dependencies "$(resolve_hbom_plugin_package_name)" @cdxgen/cdx-hbom
+reinstall_without_optional_dependencies
+install_optional_dependencies "$(resolve_hbom_plugin_package_name)" @cdxgen/cdx-hbom @appthreat/cdx-proto
 rm -rf .pnpm-store
 
 build_binary cdx-hbom .cdx-hbom-metadata.json bin/hbom.js
@@ -216,6 +261,7 @@ install_optional_dependencies @cdxgen/cdx-hbom
 rm -rf .pnpm-store
 
 build_binary cdx-hbom-slim .cdx-hbom-slim-metadata.json bin/hbom.js
+restore_staged_artifacts
 mv cdx-hbom hbom
 mv .cdx-hbom-postbuild.cdx.json .hbom-postbuild.cdx.json
 mv cdx-hbom-slim hbom-slim
