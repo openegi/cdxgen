@@ -17,11 +17,12 @@ import {
 
 const args = yargs(hideBin(process.argv))
   .option("bom", {
-    description: "Path to a CycloneDX JSON BOM file.",
+    description: "Path to a CycloneDX JSON or protobuf BOM file.",
     type: "string",
   })
   .option("bom-dir", {
-    description: "Directory containing one or more CycloneDX JSON BOM files.",
+    description:
+      "Directory containing one or more CycloneDX JSON or protobuf BOM files.",
     type: "string",
   })
   .option("workspace-dir", {

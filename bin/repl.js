@@ -32,7 +32,10 @@ import {
   getUnpackagedExecutableComponents,
   getUnpackagedSharedLibraryComponents,
 } from "../lib/helpers/inventoryStats.js";
-import { readBinary } from "../lib/helpers/protobom.js";
+import {
+  importProtobomModule,
+  isProtoBomPath,
+} from "../lib/helpers/protobomLoader.js";
 import {
   getProvenanceComponents,
   getTrustedComponents,
@@ -403,10 +406,12 @@ export const importSbom = (sbomOrPath) => {
         `⚠ Unable to import the BOM from ${importTarget} due to ${e}`,
       );
     }
-  } else if (
-    (importTarget.endsWith(".cdx") || importTarget.endsWith(".proto")) &&
-    safeExistsSync(importTarget)
-  ) {
+  } else if (isProtoBomPath(importTarget) && safeExistsSync(importTarget)) {
+    const { readBinary } = await importProtobomModule(
+      "cdxi",
+      "protobuf BOM input",
+      import.meta.url,
+    );
     sbom = readBinary(importTarget, true);
     printSummary(sbom);
   } else if (isSupportedSbomRegistryReference(importTarget)) {

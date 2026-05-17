@@ -13,6 +13,10 @@ import {
   isCycloneDxBom,
 } from "../lib/helpers/bomUtils.js";
 import {
+  importProtobomModule,
+  isProtoBomPath,
+} from "../lib/helpers/protobomLoader.js";
+import {
   dirNameStr,
   retrieveCdxgenVersion,
   safeExistsSync,
@@ -78,14 +82,13 @@ if (process.env?.CDXGEN_NODE_OPTIONS) {
 
 async function getBom(args) {
   if (safeExistsSync(args.input)) {
-    const normalizedInput = `${args.input}`.toLowerCase();
     try {
-      if (
-        normalizedInput.endsWith(".cdx") ||
-        normalizedInput.endsWith(".cdx.bin") ||
-        normalizedInput.endsWith(".proto")
-      ) {
-        const { readBinary } = await import("../lib/helpers/protobom.js");
+      if (isProtoBomPath(args.input)) {
+        const { readBinary } = await importProtobomModule(
+          "cdx-verify",
+          "protobuf BOM input",
+          import.meta.url,
+        );
         return readBinary(args.input, true);
       }
       return JSON.parse(fs.readFileSync(args.input, "utf8"));
@@ -108,12 +111,7 @@ function isLocalProtoBomInput(input) {
   if (!safeExistsSync(input)) {
     return false;
   }
-  const normalizedInput = `${input}`.toLowerCase();
-  return (
-    normalizedInput.endsWith(".cdx") ||
-    normalizedInput.endsWith(".cdx.bin") ||
-    normalizedInput.endsWith(".proto")
-  );
+  return isProtoBomPath(input);
 }
 
 const bomJson = await getBom(args);

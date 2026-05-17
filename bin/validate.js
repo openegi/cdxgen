@@ -24,6 +24,10 @@ import {
   isCycloneDxBom,
 } from "../lib/helpers/bomUtils.js";
 import {
+  importProtobomModule,
+  isProtoBomPath,
+} from "../lib/helpers/protobomLoader.js";
+import {
   dirNameStr,
   retrieveCdxgenVersion,
   safeExistsSync,
@@ -131,14 +135,13 @@ const args = _yargs
 
 async function loadBom(input, platform) {
   if (safeExistsSync(input)) {
-    const normalizedInput = `${input}`.toLowerCase();
     try {
-      if (
-        normalizedInput.endsWith(".cdx") ||
-        normalizedInput.endsWith(".cdx.bin") ||
-        normalizedInput.endsWith(".proto")
-      ) {
-        const { readBinary } = await import("../lib/helpers/protobom.js");
+      if (isProtoBomPath(input)) {
+        const { readBinary } = await importProtobomModule(
+          "cdx-validate",
+          "protobuf BOM input",
+          import.meta.url,
+        );
         return readBinary(input, true);
       }
       return JSON.parse(fs.readFileSync(input, "utf8"));
@@ -193,12 +196,7 @@ function isLocalProtoBomInput(input) {
   if (!safeExistsSync(input)) {
     return false;
   }
-  const normalizedInput = `${input}`.toLowerCase();
-  return (
-    normalizedInput.endsWith(".cdx") ||
-    normalizedInput.endsWith(".cdx.bin") ||
-    normalizedInput.endsWith(".proto")
-  );
+  return isProtoBomPath(input);
 }
 
 const bomJson = await loadBom(args.input, args.platform);

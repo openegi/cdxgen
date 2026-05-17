@@ -17,6 +17,10 @@ import {
 import { getHbomSummary } from "../lib/helpers/hbomAnalysis.js";
 import { thoughtLog } from "../lib/helpers/logger.js";
 import {
+  importProtobomModule,
+  isProtoBomPath,
+} from "../lib/helpers/protobomLoader.js";
+import {
   DEBUG_MODE,
   isDryRun,
   retrieveCdxgenVersion,
@@ -317,13 +321,12 @@ async function loadBomFromInputFile(inputFile) {
   if (!inputFile || !safeExistsSync(inputFile)) {
     throw new Error(`HBOM input file not found: ${inputFile}`);
   }
-  const normalizedInputFile = `${inputFile}`.toLowerCase();
-  if (
-    normalizedInputFile.endsWith(".cdx") ||
-    normalizedInputFile.endsWith(".cdx.bin") ||
-    normalizedInputFile.endsWith(".proto")
-  ) {
-    const { readBinary } = await import("../lib/helpers/protobom.js");
+  if (isProtoBomPath(inputFile)) {
+    const { readBinary } = await importProtobomModule(
+      hbomCommandName,
+      "protobuf BOM input",
+      import.meta.url,
+    );
     return readBinary(inputFile, true);
   }
   return JSON.parse(readFileSync(inputFile, { encoding: "utf8" }));
@@ -436,6 +439,19 @@ async function runDiagnosticsCommand() {
 }
 
 (async () => {
+  if (
+    options.exportProto ||
+    (selectedCommand === "diagnostics" && isProtoBomPath(options.input))
+  ) {
+    const featureDescription = options.exportProto
+      ? "protobuf export"
+      : "protobuf BOM input";
+    await importProtobomModule(
+      hbomCommandName,
+      featureDescription,
+      import.meta.url,
+    );
+  }
   if (selectedCommand === "diagnostics") {
     await runDiagnosticsCommand();
     if (options.dryRun || DEBUG_MODE) {
@@ -471,7 +487,11 @@ async function runDiagnosticsCommand() {
     if (protoOutputDirectory && !safeExistsSync(protoOutputDirectory)) {
       safeMkdirSync(protoOutputDirectory, { recursive: true });
     }
-    const { writeBinary } = await import("../lib/helpers/protobom.js");
+    const { writeBinary } = await importProtobomModule(
+      hbomCommandName,
+      "protobuf export",
+      import.meta.url,
+    );
     writeBinary(bomJson, options.protoBinFile);
     thoughtLog(
       `Let's also save the HBOM protobuf binary to '${options.protoBinFile}'.`,
