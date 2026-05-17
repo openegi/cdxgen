@@ -13,15 +13,15 @@ import {
 } from "../lib/helpers/bomUtils.js";
 import { deriveSpdxOutputPath } from "../lib/helpers/exportUtils.js";
 import {
+  importProtobomModule,
+  isProtoBomPath,
+} from "../lib/helpers/protobomLoader.js";
+import {
   retrieveCdxgenVersion,
   safeExistsSync,
   safeMkdirSync,
   safeWriteSync,
 } from "../lib/helpers/utils.js";
-import {
-  importProtobomModule,
-  isProtoBomPath,
-} from "../lib/helpers/protobomLoader.js";
 import { convertCycloneDxToSpdx } from "../lib/stages/postgen/spdxConverter.js";
 import { validateSpdx } from "../lib/validator/bomValidator.js";
 

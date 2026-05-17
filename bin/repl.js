@@ -363,7 +363,7 @@ if (!process.env.CDXGEN_REPL_HISTORY && !safeExistsSync(historyConfigDir)) {
   historyFile = join(historyConfigDir, ".repl_history");
 }
 
-export const importSbom = (sbomOrPath) => {
+export const importSbom = async (sbomOrPath) => {
   const importTarget = String(sbomOrPath || "").trim();
   if (!importTarget) {
     console.log("⚠ An SBOM path or image reference is required.");
@@ -435,7 +435,7 @@ export const importSbom = (sbomOrPath) => {
 };
 // Load any sbom passed from the command line
 if (process.argv.length > 2) {
-  importSbom(process.argv[process.argv.length - 1]);
+  await importSbom(process.argv[process.argv.length - 1]);
   console.log("💭 Type .print to view the BOM as a table");
   console.log("💭 Type .trusted to list components with trusted publishing.");
   console.log(
@@ -453,7 +453,7 @@ if (process.argv.length > 2) {
   }
 } else if (safeExistsSync("bom.json")) {
   // If the current directory has a bom.json load it
-  importSbom("bom.json");
+  await importSbom("bom.json");
 } else {
   console.log("💭 Use .create <path> to create an SBOM for the given path.");
   console.log("💭 Use .import <json> to import an existing BOM.");
@@ -523,9 +523,9 @@ cdxgenRepl.defineCommand("create", {
 });
 cdxgenRepl.defineCommand("import", {
   help: "import an existing BOM",
-  action(sbomOrPath) {
+  async action(sbomOrPath) {
     this.clearBufferedCommand();
-    importSbom(sbomOrPath);
+    await importSbom(sbomOrPath);
     this.displayPrompt();
   },
 });
